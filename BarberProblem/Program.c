@@ -2,65 +2,89 @@
 #include <stdlib.h>
 #include <windows.h>
 
-#define X 3 // кількість перукарів
-#define Y 5 // кількість стільців в кімнаті очікування
+#define X 5
+#define Y 30
+#define C 100
 
-HANDLE mutex; // м'ютекс
-HANDLE cond; // змінна-умова
 
-int clients_waiting = 0; // кількість клієнтів, які очікують
-int chairs_left = Y; // кількість вільних стільців в кімнаті очікування
+HANDLE waiting_room_mutex;
+int waiting_room[Y];
+int waiting_count = 0;
+int all_clients = C;
 
-DWORD WINAPI barber_work(LPVOID arg) {
-    int barber_id = *(int*)arg;
-    while (1) {
-        WaitForSingleObject(mutex, INFINITE);
-        if (clients_waiting == 0) {
-            printf("Barber %d is waiting for a customer\n", barber_id);
-            ReleaseMutex(mutex);
-            WaitForSingleObject(cond, INFINITE);
-        }
-        clients_waiting--;
-        chairs_left++;
-        printf("Barber %d is working on a customer\n", barber_id);
-        Sleep(2000); // час, необхідний на обслуговування клієнта
-        printf("Barber %d finished with a customer\n", barber_id);
-        ReleaseMutex(mutex);
-    }
-}
+DWORD WINAPI barber_work(LPVOID arg)
+{
+    int barber_id = (int)arg;
 
-DWORD WINAPI client_work(LPVOID arg) {
-    while (1) {
-        WaitForSingleObject(mutex, INFINITE);
-        if (chairs_left == 0) {
-            printf("Client is leaving the barber shop because there are no free chairs\n");
-            ReleaseMutex(mutex);
-            Sleep(rand() % 3000 + 1000); // час, необхідний для переходу до іншої перукарні
+    while (TRUE) {
+
+        WaitForSingleObject(waiting_room_mutex, INFINITE);
+
+        if (waiting_count == 0) {
+
+            if (all_clients == 0)
+            {
+                ReleaseMutex(waiting_room_mutex);
+                break;
+            }
+            printf("Barber %d is waiting for a client\n", barber_id);
+            ReleaseMutex(waiting_room_mutex); 
             continue;
         }
-        chairs_left--;
-        clients_waiting++;
-        printf("Client is waiting for a barber\n");
-        ReleaseMutex(mutex);
-        SetEvent(cond);
-        Sleep(1000); // час, необхідний для підходу до перукаря
-        printf("Client is getting a haircut\n");
-        Sleep(2000); // час, необхідний на стрижку волосся
-        printf("Client finished getting a haircut\n");
+
+        int client_id = waiting_room[--waiting_count];
+
+        ReleaseMutex(waiting_room_mutex);
+
+        printf("Barber %d finished with a client %d\n", barber_id, client_id);
     }
 }
 
-int main() {
-    HANDLE barbers[X];
-    HANDLE clients;
-    int barber_ids[X];
-    mutex = CreateMutex(NULL, FALSE, NULL);
-    cond = CreateEvent(NULL, FALSE, FALSE, NULL);
-    for (int i = 0; i < X; i++) {
-        barber_ids[i] = i;
-        barbers[i] = CreateThread(NULL, 0, barber_work, &barber_ids[i], 0, NULL);
+DWORD WINAPI client_work(LPVOID arg) 
+{
+    int client_id = (int)arg;
+    WaitForSingleObject(waiting_room_mutex, INFINITE);
+
+    if (waiting_count == Y) 
+    {
+        printf("Client %d is leaving the barber shop because there are no free chairs\n", client_id);
     }
-    clients = CreateThread(NULL, 0, client_work, NULL, 0, NULL);
-    WaitForSingleObject(clients, INFINITE);
+    else
+    {
+        waiting_room[waiting_count++] = client_id;
+        printf("Client %d is waiting for a barber\n", client_id);
+    }
+    ReleaseMutex(waiting_room_mutex);
+    all_clients--;
+}
+
+int main()
+{
+    HANDLE threads[X + C];
+
+    int barber_ids[X];
+    int client_ids[C];
+
+    waiting_room_mutex = CreateMutex(NULL, FALSE, NULL);
+
+    for (int i = 0; i < Y; i++)
+    {
+        waiting_room[i] = -1;
+    }
+
+    for (int i = 0; i < X; i++)
+    {
+        barber_ids[i] = i;
+        threads[i] = CreateThread(NULL, 0, barber_work, barber_ids[i], 0, NULL);
+    }
+
+    for (int i = 0; i < C; i++)
+    {
+        client_ids[i] = i;
+        threads[X + i] = CreateThread(NULL, 0, client_work, client_ids[i], 0, NULL);
+    }
+
+    WaitForMultipleObjects(X + C, threads, TRUE, INFINITE);
+
     return 0;
 }
